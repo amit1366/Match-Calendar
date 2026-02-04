@@ -22,8 +22,19 @@ async function apiRequest(endpoint, options = {}) {
           throw new Error('API routes not available. Vercel serverless functions only work when deployed or with "vercel dev". Please run "vercel dev" instead of "npm run dev" to test locally.');
         }
       }
-      const error = await response.json().catch(() => ({ error: 'Request failed' }));
-      throw new Error(error.error || error.message || `HTTP error! status: ${response.status}`);
+      
+      // Try to get error details from response
+      const errorData = await response.json().catch(() => ({ error: 'Request failed' }));
+      
+      // Use the error message from API if available, otherwise use status
+      const errorMessage = errorData.error || errorData.message || `HTTP error! status: ${response.status}`;
+      
+      // Create error with more context
+      const error = new Error(errorMessage);
+      error.status = response.status;
+      error.details = errorData;
+      
+      throw error;
     }
 
     return await response.json();

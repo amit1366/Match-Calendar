@@ -64,10 +64,19 @@ const PlayerManager = ({ onPlayersChange }) => {
       await loadPlayers();
     } catch (err) {
       console.error('Error creating player:', err);
-      const errorMessage = err.message || 'Failed to create player. Please try again.';
-      setError(errorMessage.includes('Database tables not found') 
-        ? 'Database not set up. Please check VERCEL_SETUP.md for instructions.'
-        : errorMessage);
+      let errorMessage = err.message || 'Failed to create player. Please try again.';
+      
+      // Provide helpful messages for common errors
+      if (errorMessage.includes('Database not set up') || 
+          errorMessage.includes('Database tables not found') ||
+          errorMessage.includes('relation') ||
+          errorMessage.includes('does not exist')) {
+        errorMessage = 'Database not set up. Please: 1) Create Vercel Postgres database in dashboard, 2) Run schema.sql in SQL Editor, 3) Redeploy. See VERCEL_SETUP.md for details.';
+      } else if (errorMessage.includes('connection')) {
+        errorMessage = 'Database connection failed. Please check your Vercel Postgres database setup.';
+      }
+      
+      setError(errorMessage);
     }
   };
 

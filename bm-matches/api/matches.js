@@ -50,10 +50,29 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error('API Error:', error);
     console.error('Error stack:', error.stack);
-    return res.status(500).json({ 
-      error: 'Internal server error', 
+    
+    // Provide more helpful error messages
+    let errorMessage = error.message || 'Internal server error';
+    let statusCode = 500;
+    
+    // Check for common database errors
+    if (error.message && (
+      error.message.includes('relation') || 
+      error.message.includes('does not exist') ||
+      error.message.includes('Database tables not found')
+    )) {
+      errorMessage = 'Database not set up. Please create Vercel Postgres database and run schema.sql';
+      statusCode = 503; // Service Unavailable
+    } else if (error.message && error.message.includes('connection')) {
+      errorMessage = 'Database connection failed. Please check your Vercel Postgres setup.';
+      statusCode = 503;
+    }
+    
+    return res.status(statusCode).json({ 
+      error: errorMessage,
       message: error.message,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      // Include stack in response for debugging (can be removed in production)
+      stack: error.stack
     });
   }
 }
