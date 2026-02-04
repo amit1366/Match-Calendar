@@ -65,7 +65,10 @@ const MatchManager = ({ players }) => {
       setShowAddForm(false);
     } catch (err) {
       console.error('Error creating match:', err);
-      setError('Failed to create match. Please try again.');
+      const errorMessage = err.message || 'Failed to create match. Please try again.';
+      setError(errorMessage.includes('Database tables not found') 
+        ? 'Database not set up. Please check VERCEL_SETUP.md for instructions.'
+        : errorMessage);
     }
   };
 

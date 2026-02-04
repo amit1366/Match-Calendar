@@ -15,13 +15,27 @@ async function apiRequest(endpoint, options = {}) {
     });
 
     if (!response.ok) {
+      // Check if it's a 404 (likely means API routes don't exist locally)
+      if (response.status === 404) {
+        const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+        if (isLocalDev) {
+          throw new Error('API routes not available. Vercel serverless functions only work when deployed or with "vercel dev". Please run "vercel dev" instead of "npm run dev" to test locally.');
+        }
+      }
       const error = await response.json().catch(() => ({ error: 'Request failed' }));
-      throw new Error(error.error || `HTTP error! status: ${response.status}`);
+      throw new Error(error.error || error.message || `HTTP error! status: ${response.status}`);
     }
 
     return await response.json();
   } catch (error) {
     console.error(`API request failed for ${endpoint}:`, error);
+    // Check if it's a network error (likely local dev issue)
+    if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+      const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+      if (isLocalDev) {
+        throw new Error('Cannot connect to API. Vercel serverless functions require "vercel dev" for local testing. Run "vercel dev" instead of "npm run dev".');
+      }
+    }
     throw error;
   }
 }

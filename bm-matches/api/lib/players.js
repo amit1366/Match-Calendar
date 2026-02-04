@@ -23,16 +23,29 @@ export async function getPlayers() {
 // POST /api/players - Create a new player
 export async function createPlayer(name) {
   try {
+    if (!name || name.trim() === '') {
+      throw new Error('Player name is required');
+    }
+    
     const playerId = `p${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
-    await sql`
+    const result = await sql`
       INSERT INTO players (id, name, created_at)
-      VALUES (${playerId}, ${name}, NOW())
+      VALUES (${playerId}, ${name.trim()}, NOW())
+      RETURNING id, name
     `;
 
-    return { id: playerId, name };
+    if (result.rows.length === 0) {
+      throw new Error('Failed to create player');
+    }
+
+    return { id: result.rows[0].id, name: result.rows[0].name };
   } catch (error) {
     console.error('Error creating player:', error);
+    // Re-throw with more context
+    if (error.message.includes('relation') || error.message.includes('does not exist')) {
+      throw new Error('Database tables not found. Please run the schema.sql file in your Vercel Postgres database.');
+    }
     throw error;
   }
 }

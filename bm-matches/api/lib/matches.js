@@ -54,14 +54,27 @@ export async function getMatches() {
 // POST /api/matches - Create a new match
 export async function createMatch(matchDate) {
   try {
+    // Check if match already exists
+    const existing = await sql`
+      SELECT id FROM matches WHERE match_date = ${matchDate}
+    `;
+    
+    if (existing.rows.length > 0) {
+      throw new Error('A match on this date already exists');
+    }
+    
     const matchId = `m${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     
     // Insert match
-    await sql`
+    const result = await sql`
       INSERT INTO matches (id, match_date, created_at)
       VALUES (${matchId}, ${matchDate}, NOW())
-      ON CONFLICT (match_date) DO NOTHING
+      RETURNING id, match_date, created_at
     `;
+
+    if (result.rows.length === 0) {
+      throw new Error('Failed to create match');
+    }
 
     // Get all players to initialize availability
     const players = await sql`SELECT id FROM players`;
@@ -80,9 +93,18 @@ export async function createMatch(matchDate) {
       await Promise.all(availabilityInserts);
     }
 
-    return { matchId, matchDate, createdAt: new Date().toISOString(), availability: {} };
+    return { 
+      matchId, 
+      matchDate, 
+      createdAt: result.rows[0].created_at || new Date().toISOString(), 
+      availability: {} 
+    };
   } catch (error) {
     console.error('Error creating match:', error);
+    // Re-throw with more context
+    if (error.message.includes('relation') || error.message.includes('does not exist')) {
+      throw new Error('Database tables not found. Please run the schema.sql file in your Vercel Postgres database.');
+    }
     throw error;
   }
 }

@@ -64,7 +64,10 @@ const PlayerManager = ({ onPlayersChange }) => {
       await loadPlayers();
     } catch (err) {
       console.error('Error creating player:', err);
-      setError('Failed to create player. Please try again.');
+      const errorMessage = err.message || 'Failed to create player. Please try again.';
+      setError(errorMessage.includes('Database tables not found') 
+        ? 'Database not set up. Please check VERCEL_SETUP.md for instructions.'
+        : errorMessage);
     }
   };
 
