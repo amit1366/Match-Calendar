@@ -1,195 +1,139 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import AddMatchForm from './AddMatchForm';
 import MatchList from './MatchList';
-import { getFutureMatches, saveMatches, cleanupPastMatches } from '../../utils/localStorage';
+import { 
+  getMatches, 
+  createMatch, 
+  updateMatch, 
+  deleteMatch, 
+  updateAvailability 
+} from '../../utils/api';
 
 const MatchManager = ({ players }) => {
   const [matches, setMatches] = useState([]);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  // Load matches from localStorage on mount
-  // Only load future/current matches, automatically filter out past ones
-  useEffect(() => {
-    // Clean up any past matches that might still be in storage
-    cleanupPastMatches();
-    
-    // Load only future matches
-    const loadedMatches = getFutureMatches();
-    
-    // Sort by date ascending (earliest first)
-    const sortedMatches = loadedMatches.sort(
-      (a, b) => new Date(a.matchDate) - new Date(b.matchDate)
-    );
-    
-    setMatches(sortedMatches);
+  // Load matches from API on mount and set up polling
+  const loadMatches = useCallback(async () => {
+    try {
+      setError(null);
+      const loadedMatches = await getMatches();
+      setMatches(loadedMatches);
+    } catch (err) {
+      console.error('Error loading matches:', err);
+      setError('Failed to load matches. Please refresh the page.');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  // Periodically check and clean up past matches
-  // This ensures that if a user leaves the page open overnight,
-  // past matches will be automatically removed
+  // Initial load
   useEffect(() => {
-    // Clean up past matches every hour
-    const cleanupInterval = setInterval(() => {
-      const removedMatches = cleanupPastMatches();
-      
-      // If matches were removed, reload the list
-      if (removedMatches.length > 0) {
-        const updatedMatches = getFutureMatches().sort(
-          (a, b) => new Date(a.matchDate) - new Date(b.matchDate)
-        );
-        setMatches(updatedMatches);
-      }
-    }, 60 * 60 * 1000); // Check every hour
+    loadMatches();
+  }, [loadMatches]);
 
-    // Also check when the page becomes visible (user returns to tab)
+  // Poll for updates every 30 seconds (near real-time)
+  useEffect(() => {
+    const pollInterval = setInterval(() => {
+      loadMatches();
+    }, 30000); // Poll every 30 seconds
+
+    // Also reload when page becomes visible (user returns to tab)
     const handleVisibilityChange = () => {
       if (!document.hidden) {
-        const removedMatches = cleanupPastMatches();
-        if (removedMatches.length > 0) {
-          const updatedMatches = getFutureMatches().sort(
-            (a, b) => new Date(a.matchDate) - new Date(b.matchDate)
-          );
-          setMatches(updatedMatches);
-        }
+        loadMatches();
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // Cleanup interval and event listener on unmount
     return () => {
-      clearInterval(cleanupInterval);
+      clearInterval(pollInterval);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, []);
+  }, [loadMatches]);
 
-  // When players are added/removed, update all matches to include new players
-  useEffect(() => {
-    if (players.length >= 0) {
-      setMatches((currentMatches) => {
-        const updatedMatches = currentMatches.map((match) => {
+  const handleAddMatch = async (matchDate) => {
+    try {
+      setError(null);
+      const newMatch = await createMatch(matchDate);
+      
+      // Reload matches to get the latest data from server
+      await loadMatches();
+      setShowAddForm(false);
+    } catch (err) {
+      console.error('Error creating match:', err);
+      setError('Failed to create match. Please try again.');
+    }
+  };
+
+  const handleUpdateAvailability = async (matchId, playerId, status) => {
+    try {
+      setError(null);
+      // Optimistically update UI
+      const updatedMatches = matches.map((match) => {
+        if (match.matchId === matchId) {
           const updatedAvailability = { ...match.availability };
-          // Add new players to availability (default: null/Not Marked)
-          players.forEach((player) => {
-            if (!(player.id in updatedAvailability)) {
-              updatedAvailability[player.id] = null;
-            }
-          });
-          // Remove deleted players from availability
-          const playerIds = new Set(players.map((p) => p.id));
-          Object.keys(updatedAvailability).forEach((playerId) => {
-            if (!playerIds.has(playerId)) {
-              delete updatedAvailability[playerId];
-            }
-          });
+          if (status === null) {
+            delete updatedAvailability[playerId];
+          } else {
+            updatedAvailability[playerId] = status;
+          }
           return {
             ...match,
             availability: updatedAvailability,
           };
-        });
-        // Only update if there are actual changes
-        const hasChanges = updatedMatches.some((updatedMatch, index) => {
-          const currentMatch = currentMatches[index];
-          return (
-            JSON.stringify(updatedMatch.availability) !==
-            JSON.stringify(currentMatch?.availability)
-          );
-        });
-        if (hasChanges) {
-          saveMatches(updatedMatches);
-          return updatedMatches;
         }
-        return currentMatches;
+        return match;
       });
+      setMatches(updatedMatches);
+
+      // Update on server
+      await updateAvailability(matchId, playerId, status);
+      
+      // Reload to ensure consistency (or remove this for faster UX)
+      // await loadMatches();
+    } catch (err) {
+      console.error('Error updating availability:', err);
+      setError('Failed to update availability. Please try again.');
+      // Reload on error to get correct state
+      await loadMatches();
     }
-  }, [players]);
-
-  const handleAddMatch = (matchDate) => {
-    const newMatch = {
-      matchId: `m${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      matchDate: matchDate,
-      createdAt: new Date().toISOString(),
-      availability: {},
-    };
-
-    // Initialize availability for all existing players
-    players.forEach((player) => {
-      newMatch.availability[player.id] = null;
-    });
-
-    // Add new match and sort by date
-    const updatedMatches = [...matches, newMatch].sort(
-      (a, b) => new Date(a.matchDate) - new Date(b.matchDate)
-    );
-    
-    // Update state and save to localStorage
-    // saveMatches will automatically filter out any past matches
-    setMatches(updatedMatches);
-    saveMatches(updatedMatches);
   };
 
-  const handleUpdateAvailability = (matchId, playerId, status) => {
-    const updatedMatches = matches.map((match) => {
-      if (match.matchId === matchId) {
-        const updatedAvailability = { ...match.availability };
-        if (status === null) {
-          delete updatedAvailability[playerId];
-        } else {
-          updatedAvailability[playerId] = status;
-        }
-        return {
-          ...match,
-          availability: updatedAvailability,
-        };
-      }
-      return match;
-    });
-    
-    // Update state and save to localStorage
-    // saveMatches will automatically filter out any past matches
-    setMatches(updatedMatches);
-    saveMatches(updatedMatches);
+  const handleEditMatch = async (matchId, newDate) => {
+    try {
+      setError(null);
+      await updateMatch(matchId, newDate);
+      
+      // Reload matches to ensure we only have future ones
+      // This handles the case where a match date was edited to a past date
+      await loadMatches();
+    } catch (err) {
+      console.error('Error updating match:', err);
+      setError('Failed to update match. Please try again.');
+    }
   };
 
-  const handleEditMatch = (matchId, newDate) => {
-    const updatedMatches = matches.map((match) => {
-      if (match.matchId === matchId) {
-        return {
-          ...match,
-          matchDate: newDate,
-        };
-      }
-      return match;
-    });
-    
-    // Re-sort after edit
-    const sortedMatches = updatedMatches.sort(
-      (a, b) => new Date(a.matchDate) - new Date(b.matchDate)
-    );
-    
-    // Save to localStorage (will automatically filter out past matches)
-    saveMatches(sortedMatches);
-    
-    // Reload matches from storage to ensure we only have future ones
-    // This handles the case where a match date was edited to a past date
-    const filteredMatches = getFutureMatches().sort(
-      (a, b) => new Date(a.matchDate) - new Date(b.matchDate)
-    );
-    
-    setMatches(filteredMatches);
-  };
-
-  const handleDeleteMatch = (matchId) => {
-    const updatedMatches = matches.filter((match) => match.matchId !== matchId);
-    
-    // Update state and save to localStorage
-    setMatches(updatedMatches);
-    saveMatches(updatedMatches);
+  const handleDeleteMatch = async (matchId) => {
+    try {
+      setError(null);
+      await deleteMatch(matchId);
+      
+      // Remove from local state immediately
+      setMatches(matches.filter((match) => match.matchId !== matchId));
+    } catch (err) {
+      console.error('Error deleting match:', err);
+      setError('Failed to delete match. Please try again.');
+      // Reload on error
+      await loadMatches();
+    }
   };
 
   const handleAddMatchWithClose = (matchDate) => {
     handleAddMatch(matchDate);
-    setShowAddForm(false);
   };
 
   return (
@@ -203,6 +147,14 @@ const MatchManager = ({ players }) => {
           Add Match
         </button>
       </div>
+      {error && (
+        <div className="error-message" style={{ margin: '10px 0', padding: '10px', background: '#fee', color: '#c33', borderRadius: '4px' }}>
+          {error}
+        </div>
+      )}
+      {loading && (
+        <div style={{ padding: '20px', textAlign: 'center' }}>Loading matches...</div>
+      )}
       {showAddForm && (
         <AddMatchForm 
           onAddMatch={handleAddMatchWithClose} 
@@ -210,13 +162,15 @@ const MatchManager = ({ players }) => {
           onCancel={() => setShowAddForm(false)}
         />
       )}
-      <MatchList
-        matches={matches}
-        players={players}
-        onUpdateAvailability={handleUpdateAvailability}
-        onEditMatch={handleEditMatch}
-        onDeleteMatch={handleDeleteMatch}
-      />
+      {!loading && (
+        <MatchList
+          matches={matches}
+          players={players}
+          onUpdateAvailability={handleUpdateAvailability}
+          onEditMatch={handleEditMatch}
+          onDeleteMatch={handleDeleteMatch}
+        />
+      )}
     </div>
   );
 };
