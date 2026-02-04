@@ -1,20 +1,66 @@
 import { useState, useEffect } from 'react';
 import AddMatchForm from './AddMatchForm';
 import MatchList from './MatchList';
-import { getMatches, saveMatches } from '../../utils/localStorage';
+import { getFutureMatches, saveMatches, cleanupPastMatches } from '../../utils/localStorage';
 
 const MatchManager = ({ players }) => {
   const [matches, setMatches] = useState([]);
   const [showAddForm, setShowAddForm] = useState(false);
 
   // Load matches from localStorage on mount
+  // Only load future/current matches, automatically filter out past ones
   useEffect(() => {
-    const loadedMatches = getMatches();
-    // Sort by date ascending
+    // Clean up any past matches that might still be in storage
+    cleanupPastMatches();
+    
+    // Load only future matches
+    const loadedMatches = getFutureMatches();
+    
+    // Sort by date ascending (earliest first)
     const sortedMatches = loadedMatches.sort(
       (a, b) => new Date(a.matchDate) - new Date(b.matchDate)
     );
+    
     setMatches(sortedMatches);
+  }, []);
+
+  // Periodically check and clean up past matches
+  // This ensures that if a user leaves the page open overnight,
+  // past matches will be automatically removed
+  useEffect(() => {
+    // Clean up past matches every hour
+    const cleanupInterval = setInterval(() => {
+      const removedMatches = cleanupPastMatches();
+      
+      // If matches were removed, reload the list
+      if (removedMatches.length > 0) {
+        const updatedMatches = getFutureMatches().sort(
+          (a, b) => new Date(a.matchDate) - new Date(b.matchDate)
+        );
+        setMatches(updatedMatches);
+      }
+    }, 60 * 60 * 1000); // Check every hour
+
+    // Also check when the page becomes visible (user returns to tab)
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        const removedMatches = cleanupPastMatches();
+        if (removedMatches.length > 0) {
+          const updatedMatches = getFutureMatches().sort(
+            (a, b) => new Date(a.matchDate) - new Date(b.matchDate)
+          );
+          setMatches(updatedMatches);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Cleanup interval and event listener on unmount
+    return () => {
+      clearInterval(cleanupInterval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   // When players are added/removed, update all matches to include new players
@@ -71,9 +117,13 @@ const MatchManager = ({ players }) => {
       newMatch.availability[player.id] = null;
     });
 
+    // Add new match and sort by date
     const updatedMatches = [...matches, newMatch].sort(
       (a, b) => new Date(a.matchDate) - new Date(b.matchDate)
     );
+    
+    // Update state and save to localStorage
+    // saveMatches will automatically filter out any past matches
     setMatches(updatedMatches);
     saveMatches(updatedMatches);
   };
@@ -94,6 +144,9 @@ const MatchManager = ({ players }) => {
       }
       return match;
     });
+    
+    // Update state and save to localStorage
+    // saveMatches will automatically filter out any past matches
     setMatches(updatedMatches);
     saveMatches(updatedMatches);
   };
@@ -108,16 +161,28 @@ const MatchManager = ({ players }) => {
       }
       return match;
     });
+    
     // Re-sort after edit
     const sortedMatches = updatedMatches.sort(
       (a, b) => new Date(a.matchDate) - new Date(b.matchDate)
     );
-    setMatches(sortedMatches);
+    
+    // Save to localStorage (will automatically filter out past matches)
     saveMatches(sortedMatches);
+    
+    // Reload matches from storage to ensure we only have future ones
+    // This handles the case where a match date was edited to a past date
+    const filteredMatches = getFutureMatches().sort(
+      (a, b) => new Date(a.matchDate) - new Date(b.matchDate)
+    );
+    
+    setMatches(filteredMatches);
   };
 
   const handleDeleteMatch = (matchId) => {
     const updatedMatches = matches.filter((match) => match.matchId !== matchId);
+    
+    // Update state and save to localStorage
     setMatches(updatedMatches);
     saveMatches(updatedMatches);
   };
